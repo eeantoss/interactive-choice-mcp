@@ -238,11 +238,9 @@ input[type="checkbox"] {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    flex: 0 1 auto;
-    overflow-y: auto;
+    flex: 0 0 auto;
     outline: none;
-    min-height: 150px;
-    /* Natural height, shrink if needed, min height for visibility */
+    /* No overflow - let content determine height */
 }
 
 .option {
@@ -326,9 +324,13 @@ input[type="checkbox"] {
 }
 
 .option-note {
-    flex: 0 0 180px;
+    flex: 1 1 120px;
+    min-width: 100px;
+    max-width: 300px;
     padding: 6px 10px;
     font-size: 0.8125rem;
+    resize: none;
+    overflow: hidden;
 }
 
 /* Section: Timeout Progress */
@@ -380,6 +382,8 @@ input[type="checkbox"] {
     color: var(--text);
     transition: border-color 0.2s, box-shadow 0.2s;
     resize: vertical;
+    min-height: 60px;
+    /* No max-height - allow user to expand freely */
 }
 
 .annotation-section textarea:focus {

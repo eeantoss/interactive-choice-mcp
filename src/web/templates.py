@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import markdown
 
 from ..infra.i18n import get_text, TEXTS
-from ..core.models import TRANSPORT_WEB, LANG_EN
+from ..core.models import TRANSPORT_WEB, TRANSPORT_TERMINAL, TRANSPORT_DESKTOP, LANG_EN
 from .bundler import get_asset_bundle
 
 if TYPE_CHECKING:
@@ -126,8 +126,15 @@ def _render_html(
     # Terminal option is always available as a global setting
     transport_options.append(
         "<option value='terminal' {sel}>{label}</option>".format(
-            sel="selected" if defaults.interface != TRANSPORT_WEB else "",
+            sel="selected" if defaults.interface == TRANSPORT_TERMINAL else "",
             label=get_text("settings.transport_terminal", lang),
+        )
+    )
+    # Desktop option (native window)
+    transport_options.append(
+        "<option value='desktop' {sel}>{label}</option>".format(
+            sel="selected" if defaults.interface == TRANSPORT_DESKTOP else "",
+            label=get_text("settings.transport_desktop", lang),
         )
     )
 

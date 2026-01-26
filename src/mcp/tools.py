@@ -6,7 +6,7 @@ Exports provide_choice and poll_selection tools with proper documentation.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from fastmcp import FastMCP
     from ..core.orchestrator import ChoiceOrchestrator
 
 from .response_formatter import format_mcp_response

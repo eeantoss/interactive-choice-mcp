@@ -18,6 +18,7 @@ __all__ = [
     "TRANSPORT_TERMINAL",
     "TRANSPORT_TERMINAL_WEB",
     "TRANSPORT_WEB",
+    "TRANSPORT_DESKTOP",
     "LANG_EN",
     "LANG_ZH",
     "VALID_LANGUAGES",
@@ -42,6 +43,7 @@ DEFAULT_TIMEOUT_SECONDS = 300
 TRANSPORT_TERMINAL = "terminal"
 TRANSPORT_TERMINAL_WEB = "terminal-web"  # Started in terminal, switched to web
 TRANSPORT_WEB = "web"
+TRANSPORT_DESKTOP = "desktop"  # Native desktop window using PyWebView
 
 # Language constants
 LANG_EN = "en"
@@ -223,4 +225,4 @@ VALID_ACTIONS = {
     # Session interrupted unexpectedly (e.g., agent disconnected mid-interaction)
     "interrupted",
 }
-VALID_TRANSPORTS = {TRANSPORT_TERMINAL, TRANSPORT_TERMINAL_WEB, TRANSPORT_WEB}
+VALID_TRANSPORTS = {TRANSPORT_TERMINAL, TRANSPORT_TERMINAL_WEB, TRANSPORT_WEB, TRANSPORT_DESKTOP}

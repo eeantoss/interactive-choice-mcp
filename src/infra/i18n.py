@@ -44,6 +44,10 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "en": "Web",
         "zh": "Web 浏览器",
     },
+    "settings.transport_desktop": {
+        "en": "Desktop Window",
+        "zh": "桌面弹窗",
+    },
     "settings.timeout": {
         "en": "Timeout (seconds)",
         "zh": "超时时间 (秒)",

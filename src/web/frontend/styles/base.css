@@ -142,16 +142,14 @@ h1 {
 }
 
 .prompt-container {
-    flex: 0 1 auto;
-    overflow-y: auto;
+    flex: 0 0 auto;
     margin-bottom: 16px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 12px;
     background-color: var(--card-bg);
     min-height: 96px;
-    max-height: 50%;
-    /* Cap at 50% height, shrink if needed, don't grow unnecessarily */
+    /* No max-height - let content determine height */
 }
 
 .prompt {

@@ -90,25 +90,37 @@ def _resolve_port() -> int:
 def _find_free_port(host: str, port: int) -> int:
     """Try to bind to the specified port.
     
-    Unlike before, this function no longer automatically falls back to a random port.
-    If the port is occupied, it raises an error. This ensures port stability.
+    If the port is already in use, check if it's our server by making a health check.
+    If it's our server, we can reuse it. Otherwise, return the port anyway and let
+    uvicorn handle the error.
     
     Args:
         host: The host address to bind to.
         port: The desired port to bind to.
         
     Returns:
-        The port number that was successfully bound.
-        
-    Raises:
-        OSError: If the port is already in use.
+        The port number (may or may not be available).
     """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        # Enable SO_REUSEADDR to handle TIME_WAIT state from previous runs
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((host, port))
-        _logger.info(f"Successfully bound to port {port}")
-        return int(s.getsockname()[1])
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Enable SO_REUSEADDR to handle TIME_WAIT state from previous runs
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+            _logger.info(f"Port {port} is available")
+            return port
+    except OSError as e:
+        # Port is in use - check if it's our server
+        _logger.info(f"Port {port} is in use, checking if it's our server...")
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"http://{host}:{port}/api/interactions", timeout=2) as resp:
+                if resp.status == 200:
+                    _logger.info(f"Port {port} is used by our server, will reuse")
+                    return port
+        except Exception:
+            pass
+        _logger.warning(f"Port {port} is in use by another process")
+        return port
 
 
 # Section: Constants
@@ -130,6 +142,8 @@ class WebChoiceServer:
         self._cleanup_task: Optional[asyncio.Task[None]] = None
         # Global WebSocket connections for interaction list updates
         self._list_connections: set[WebSocket] = set()
+        # Flag to indicate if we're using an external server
+        self._using_external_server = False
         self._register_routes()
 
     def _register_routes(self) -> None:
@@ -483,6 +497,62 @@ class WebChoiceServer:
             except Exception as exc:
                 _logger.exception(f"Failed to save global config: {exc}")
                 raise HTTPException(status_code=500, detail=f"Failed to save config: {str(exc)}") from exc
+
+        # Section: Session Creation API (for cross-process communication)
+        @app.post("/api/session")
+        async def create_session_api(payload: Dict[str, object]):  # noqa: ANN201
+            """Create a new choice session via HTTP API.
+            
+            This endpoint allows external processes to create sessions on a running server.
+            Used when multiple MCP processes share the same web server.
+            """
+            try:
+                title = str(payload.get("title", ""))
+                prompt = str(payload.get("prompt", ""))
+                selection_mode = str(payload.get("selection_mode", "single"))
+                options_raw = payload.get("options", [])
+                timeout_seconds = payload.get("timeout_seconds")
+                allow_terminal = bool(payload.get("allow_terminal", True))
+                
+                # Parse options
+                options = []
+                if isinstance(options_raw, list):
+                    for opt in options_raw:
+                        if isinstance(opt, dict):
+                            options.append(ProvideChoiceOption(
+                                id=str(opt.get("id", "")),
+                                description=str(opt.get("description", "")),
+                                recommended=bool(opt.get("recommended", False)),
+                            ))
+                
+                # Create request
+                req = ProvideChoiceRequest(
+                    title=title,
+                    prompt=prompt,
+                    selection_mode=selection_mode,
+                    options=options,
+                    timeout_seconds=int(timeout_seconds) if timeout_seconds else DEFAULT_TIMEOUT_SECONDS,
+                )
+                
+                # Get config
+                from ..infra import ConfigStore
+                config = ConfigStore().load() or ProvideChoiceConfig(
+                    interface=TRANSPORT_WEB,
+                    timeout_seconds=req.timeout_seconds,
+                )
+                
+                # Create session locally
+                session = await self._create_session_internal(req, config, allow_terminal)
+                
+                return JSONResponse({
+                    "status": "ok",
+                    "session_id": session.choice_id,
+                    "url": session.url,
+                    "timeout_seconds": session.config_used.timeout_seconds,
+                })
+            except Exception as exc:
+                _logger.exception(f"Failed to create session via API: {exc}")
+                raise HTTPException(status_code=500, detail=f"Failed to create session: {str(exc)}") from exc
 
         # Section: Terminal Hand-off Endpoints
         @app.get("/terminal/{session_id}")
@@ -927,6 +997,20 @@ class WebChoiceServer:
     async def ensure_running(self) -> None:
         if self._server_task and not self._server_task.done():
             return
+        
+        # Check if server is already running on this port (from another process)
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"http://{self.host}:{self.port}/api/interactions", timeout=2) as resp:
+                if resp.status == 200:
+                    _logger.info(f"Server already running on http://{self.host}:{self.port}, will use external server")
+                    # Mark as using external server
+                    self._using_external_server = True
+                    self._server_task = asyncio.create_task(self._dummy_server_task())
+                    return
+        except Exception:
+            pass  # Server not running, proceed to start
+        
         # Initialize interaction store and cleanup expired sessions
         from ..store.interaction_store import get_interaction_store
         store = get_interaction_store()
@@ -939,10 +1023,32 @@ class WebChoiceServer:
         config = uvicorn.Config(self.app, host=self.host, port=self.port, log_level="error")
         self._server = uvicorn.Server(config)
         assert self._server is not None
-        self._server_task = asyncio.create_task(self._server.serve())
-        if self._cleanup_task is None or self._cleanup_task.done():
-            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
-        await asyncio.sleep(0.1)
+        
+        try:
+            self._server_task = asyncio.create_task(self._server.serve())
+            if self._cleanup_task is None or self._cleanup_task.done():
+                self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+            # Wait a bit longer to ensure server is ready
+            await asyncio.sleep(0.3)
+            
+            # Check if server started successfully
+            if self._server_task.done():
+                exc = self._server_task.exception()
+                if exc:
+                    _logger.error(f"Server failed to start: {exc}")
+                    raise exc
+        except OSError as e:
+            if "Address already in use" in str(e) or "address already in use" in str(e).lower():
+                _logger.warning(f"Port {self.port} already in use, switching to external server mode")
+                self._using_external_server = True
+                self._server_task = asyncio.create_task(self._dummy_server_task())
+            else:
+                raise
+    
+    async def _dummy_server_task(self) -> None:
+        """Dummy task that never completes, used when reusing existing server."""
+        while True:
+            await asyncio.sleep(3600)  # Sleep for an hour, effectively forever
 
     async def shutdown(self) -> None:
         """Shutdown the web server and cleanup resources.
@@ -975,7 +1081,138 @@ class WebChoiceServer:
 
     async def create_session(self, req: ProvideChoiceRequest, defaults: ProvideChoiceConfig, allow_terminal: bool) -> ChoiceSession:
         await self.ensure_running()
+        
+        # If we're using an external server, create session via HTTP API
+        if self._using_external_server:
+            return await self._create_session_via_api(req, defaults, allow_terminal)
+        
+        return await self._create_session_internal(req, defaults, allow_terminal)
+    
+    async def _create_session_via_api(self, req: ProvideChoiceRequest, defaults: ProvideChoiceConfig, allow_terminal: bool) -> ChoiceSession:
+        """Create a session on an external server via HTTP API."""
+        import urllib.request
+        import json as json_module
+        
+        payload = {
+            "title": req.title,
+            "prompt": req.prompt,
+            "selection_mode": req.selection_mode,
+            "options": [{"id": o.id, "description": o.description, "recommended": o.recommended} for o in req.options],
+            "timeout_seconds": defaults.timeout_seconds,
+            "allow_terminal": allow_terminal,
+        }
+        
+        data = json_module.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://{self.host}:{self.port}/api/session",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            result = json_module.loads(resp.read().decode("utf-8"))
+        
+        session_id = result["session_id"]
+        url = result["url"]
+        timeout_seconds = result["timeout_seconds"]
+        
+        # Create a local proxy session that polls the external server
+        loop = asyncio.get_running_loop()
+        result_future: asyncio.Future[ProvideChoiceResponse] = loop.create_future()
+        now = time.monotonic()
+        deadline = _deadline_from_seconds(timeout_seconds, now=now)
+        invocation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        session = ChoiceSession(
+            choice_id=session_id,
+            req=req,
+            defaults=defaults,
+            allow_terminal=allow_terminal,
+            url=url,
+            deadline=deadline,
+            result_future=result_future,
+            connections=set(),
+            config_used=defaults,
+            created_at=now,
+            invocation_time=invocation_time,
+            on_completion=None,  # External server handles completion
+        )
+        
+        # Start a task to poll for results from the external server
+        session.monitor_task = asyncio.create_task(self._poll_external_session(session))
+        self.sessions[session_id] = session
+        
+        _logger.info(f"Created proxy session {session_id[:8]} via external server")
+        return session
+    
+    async def _poll_external_session(self, session: ChoiceSession) -> None:
+        """Poll an external server for session results."""
+        import urllib.request
+        import json as json_module
+        
+        while not session.result_future.done():
+            try:
+                with urllib.request.urlopen(
+                    f"http://{self.host}:{self.port}/api/interaction/{session.choice_id}",
+                    timeout=5
+                ) as resp:
+                    data = json_module.loads(resp.read().decode("utf-8"))
+                
+                session_state = data.get("session_state", {})
+                status = session_state.get("status", "pending")
+                
+                if status != "pending":
+                    # Session completed on external server
+                    action_status = session_state.get("action_status", "selected")
+                    selected_indices = session_state.get("selected_indices", [])
+                    option_annotations = session_state.get("option_annotations", {})
+                    additional_annotation = session_state.get("additional_annotation")
+                    
+                    from ..core.response import normalize_response, cancelled_response
+                    
+                    if action_status in ("cancelled", "cancel_with_annotation"):
+                        response = cancelled_response(
+                            interface=TRANSPORT_WEB,
+                            url=session.url,
+                            option_annotations=option_annotations,
+                            additional_annotation=additional_annotation,
+                        )
+                    else:
+                        response = normalize_response(
+                            req=session.req,
+                            selected_indices=selected_indices,
+                            interface=TRANSPORT_WEB,
+                            url=session.url,
+                            option_annotations=option_annotations,
+                            additional_annotation=additional_annotation,
+                        )
+                        # Override action_status if it's a timeout
+                        if action_status.startswith("timeout"):
+                            response = ProvideChoiceResponse(
+                                action_status=action_status,
+                                selection=response.selection,
+                            )
+                    
+                    session.set_result(response)
+                    break
+                    
+            except Exception as e:
+                _logger.debug(f"Error polling external session: {e}")
+            
+            await asyncio.sleep(1)
+    
+    async def _create_session_internal(self, req: ProvideChoiceRequest, defaults: ProvideChoiceConfig, allow_terminal: bool) -> ChoiceSession:
+        """Create a session locally on this server."""
         choice_id = uuid.uuid4().hex
+        
+        # Ensure unique session ID (extremely unlikely collision, but safe)
+        retry_count = 0
+        while choice_id in self.sessions and retry_count < 3:
+            _logger.warning(f"Session ID collision detected, regenerating: {choice_id[:8]}")
+            choice_id = uuid.uuid4().hex
+            retry_count += 1
+        
         defaults.interface = TRANSPORT_WEB
         loop = asyncio.get_running_loop()
         result_future: asyncio.Future[ProvideChoiceResponse] = loop.create_future()
@@ -1013,12 +1250,24 @@ class WebChoiceServer:
         _logger.info(f"Session {session.choice_id[:8]} completion handled: {session.final_result.action_status if session.final_result else 'unknown'}")
 
     async def _cleanup_loop(self) -> None:
+        """Periodically clean up expired sessions.
+        
+        Only removes sessions that:
+        1. Have a final result (completed)
+        2. Have been completed for at least 600 seconds (10 minutes)
+        
+        Active sessions (no final result) are never cleaned up by this loop.
+        """
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(30)  # Check every 30 seconds instead of 10
             now = time.monotonic()
-            expired = [cid for cid, session in self.sessions.items() if session.is_expired(now)]
+            expired = []
+            for cid, session in self.sessions.items():
+                # Only clean up completed sessions that are old enough
+                if session.final_result is not None and session.is_expired(now):
+                    expired.append(cid)
             for cid in expired:
-                _logger.debug(f"Cleaning up expired session {cid[:8]}")
+                _logger.debug(f"Cleaning up expired completed session {cid[:8]}")
                 await self._remove_session(cid)
 
     async def _remove_session(self, choice_id: str) -> None:
@@ -1181,10 +1430,18 @@ async def run_web_choice(
     
     server = await _get_server()
     session = await server.create_session(req, defaults, allow_terminal)
-    try:
-        webbrowser.open(session.url)
-    except Exception:
-        pass
+    
+    # Only open browser if no active WebSocket connections exist
+    # This prevents opening multiple browser tabs when user already has the page open
+    has_active_connections = len(server._list_connections) > 0
+    if not has_active_connections:
+        try:
+            webbrowser.open(session.url)
+            _logger.info(f"Opened browser for session {session.choice_id[:8]}")
+        except Exception:
+            pass
+    else:
+        _logger.info(f"Skipping browser open for session {session.choice_id[:8]}, {len(server._list_connections)} active connections")
 
     try:
         result = await session.wait_for_result()

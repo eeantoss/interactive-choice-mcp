@@ -4,7 +4,7 @@ Initializes the FastMCP server and registers interactive choice tools.
 """
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from .core.orchestrator import ChoiceOrchestrator
 from .mcp.tools import register_tools

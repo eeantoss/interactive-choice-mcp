@@ -21,6 +21,7 @@ from .models import (
     ValidationError,
     TRANSPORT_TERMINAL,
     TRANSPORT_WEB,
+    TRANSPORT_DESKTOP,
 )
 from .validation import parse_request
 from .response import cancelled_response, timeout_response
@@ -115,6 +116,19 @@ class ChoiceOrchestrator:
             self._last_config = config_defaults
             return await create_terminal_handoff_session(req, config_defaults)
 
+        # If desktop interface is configured, use native window
+        if config_defaults.interface == TRANSPORT_DESKTOP:
+            _logger.debug("Using desktop interface (pywebview)")
+            from ..desktop import run_desktop_choice, is_desktop_available
+            if is_desktop_available():
+                response, final_config = await run_desktop_choice(req, defaults=config_defaults, allow_terminal=True)
+                self._last_config = final_config
+                _logger.info(f"Choice completed via desktop: action={response.action_status}")
+                return response
+            else:
+                _logger.warning("Desktop mode unavailable, falling back to web")
+                # Fall through to web mode
+
         # Otherwise, use web interface (default)
         _logger.debug("Using web interface")
         response, final_config = await run_web_choice(req, defaults=config_defaults, allow_terminal=True)
@@ -162,29 +176,58 @@ async def safe_handle(orchestrator: ChoiceOrchestrator, **kwargs) -> ProvideChoi
     
     Ensures that the MCP tool always returns a valid JSON response,
     even if validation fails or an unhandled exception occurs.
+    Includes retry logic for transient connection errors.
     """
-    try:
-        return await orchestrator.handle(**kwargs)
-    except ValidationError as exc:
-        # Return a cancelled response if validation fails, including the validation detail.
-        _logger.warning(f"Validation error: {exc}")
-        return cancelled_response(
-            interface=kwargs.get("interface") or TRANSPORT_TERMINAL,
-            url=None,
-            summary=f"validation_error: {exc}",
-        )
-    except asyncio.CancelledError:
-        _logger.debug("Request cancelled")
-        raise
-    except Exception as exc:
-        # Catch-all for other errors, treating them as timeouts/failures.
-        _logger.exception(f"Unexpected error during orchestration: {exc}")
-        # We try to parse the request to get the req object for timeout_response
+    max_retries = 2
+    last_error = None
+    
+    for attempt in range(max_retries + 1):
         try:
-            # Filter out session_id as it's not part of parse_request
-            parse_kwargs = {k: v for k, v in kwargs.items() if k != "session_id"}
-            req = parse_request(**parse_kwargs)
-            return timeout_response(req=req, interface=kwargs.get("interface") or TRANSPORT_TERMINAL, url=None)
-        except Exception:
-            # If even parsing fails, we can't use timeout_response properly, return cancelled
-            return cancelled_response(interface=kwargs.get("interface") or TRANSPORT_TERMINAL, url=None)
+            return await orchestrator.handle(**kwargs)
+        except ValidationError as exc:
+            # Validation errors should not be retried
+            _logger.warning(f"Validation error: {exc}")
+            return cancelled_response(
+                interface=kwargs.get("interface") or TRANSPORT_TERMINAL,
+                url=None,
+                summary=f"validation_error: {exc}",
+            )
+        except asyncio.CancelledError:
+            _logger.debug("Request cancelled")
+            raise
+        except ConnectionError as exc:
+            # Connection errors may be transient, retry
+            last_error = exc
+            if attempt < max_retries:
+                _logger.warning(f"Connection error (attempt {attempt + 1}/{max_retries + 1}): {exc}, retrying...")
+                await asyncio.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                continue
+            _logger.exception(f"Connection error after {max_retries + 1} attempts: {exc}")
+        except OSError as exc:
+            # OS errors (like port binding) may be transient
+            last_error = exc
+            if attempt < max_retries:
+                _logger.warning(f"OS error (attempt {attempt + 1}/{max_retries + 1}): {exc}, retrying...")
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
+            _logger.exception(f"OS error after {max_retries + 1} attempts: {exc}")
+        except Exception as exc:
+            # Other errors - log and return error response
+            last_error = exc
+            _logger.exception(f"Unexpected error during orchestration: {exc}")
+            break
+    
+    # All retries exhausted or non-retryable error
+    try:
+        # Filter out session_id as it's not part of parse_request
+        parse_kwargs = {k: v for k, v in kwargs.items() if k != "session_id"}
+        req = parse_request(**parse_kwargs)
+        return timeout_response(req=req, interface=kwargs.get("interface") or TRANSPORT_TERMINAL, url=None)
+    except Exception:
+        # If even parsing fails, return cancelled response with error details
+        error_msg = str(last_error) if last_error else "Unknown error"
+        return cancelled_response(
+            interface=kwargs.get("interface") or TRANSPORT_TERMINAL, 
+            url=None,
+            summary=f"orchestration_error: {error_msg}",
+        )

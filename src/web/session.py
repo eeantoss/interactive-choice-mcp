@@ -104,6 +104,10 @@ class ChoiceSession:
         return await self.result_future
 
     async def broadcast_sync(self) -> None:
+        """Broadcast sync message to all connected WebSocket clients.
+        
+        Handles connection errors gracefully without affecting the session.
+        """
         if not self.connections:
             return
         payload = {
@@ -115,12 +119,18 @@ class ChoiceSession:
         for ws in list(self.connections):
             try:
                 await ws.send_json(payload)
-            except Exception:
+            except Exception as e:
+                # Log but don't fail - connection issues shouldn't affect session
                 stale.add(ws)
+        # Remove stale connections after iteration
         for ws in stale:
             self.connections.discard(ws)
 
     async def broadcast_status(self, status: str, action_status: Optional[str] = None) -> None:
+        """Broadcast status update to all connected WebSocket clients.
+        
+        Handles connection errors gracefully without affecting the session.
+        """
         if not self.connections:
             return
         payload = {"type": "status", "status": status}
@@ -131,7 +141,9 @@ class ChoiceSession:
             try:
                 await ws.send_json(payload)
             except Exception:
+                # Connection issues shouldn't affect session state
                 stale.add(ws)
+        # Remove stale connections after iteration
         for ws in stale:
             self.connections.discard(ws)
 
@@ -173,11 +185,19 @@ class ChoiceSession:
         )
 
     def is_expired(self, now: float) -> bool:
-        return (
-            self.final_result is not None
-            and self.completed_at is not None
-            and now - self.completed_at >= 600
-        )
+        """Check if this session should be cleaned up.
+        
+        A session is considered expired only if:
+        1. It has a final result (completed)
+        2. It has been completed for at least 600 seconds (10 minutes)
+        
+        Active sessions (no final result) are never considered expired.
+        """
+        if self.final_result is None:
+            return False
+        if self.completed_at is None:
+            return False
+        return now - self.completed_at >= 600
 
     async def close(self) -> None:
         if self.monitor_task and not self.monitor_task.done():
