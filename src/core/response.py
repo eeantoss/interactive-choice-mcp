@@ -25,6 +25,7 @@ def normalize_response(
     url: Optional[str] = None,
     option_annotations: Optional[dict[str, str]] = None,
     additional_annotation: Optional[str] = None,
+    uploaded_images: Optional[list] = None,
     action_status: str = "selected",
 ) -> "ProvideChoiceResponse":
     """Normalize response and validate selected option ids."""
@@ -32,6 +33,7 @@ def normalize_response(
     from .models import (
         ProvideChoiceResponse,
         ProvideChoiceSelection,
+        UploadedImage,
         VALID_ACTIONS,
         VALID_TRANSPORTS,
         ValidationError,
@@ -58,7 +60,21 @@ def normalize_response(
         summary_parts.append(f"option_annotations={option_annotations}")
     if additional_annotation:
         summary_parts.append(f"additional_annotation={additional_annotation}")
+    if uploaded_images:
+        summary_parts.append(f"uploaded_images={len(uploaded_images)}")
     summary = ", ".join(summary_parts) if summary_parts else "no selection"
+
+    # Parse uploaded images
+    parsed_images: list[UploadedImage] = []
+    if uploaded_images:
+        for img in uploaded_images:
+            if isinstance(img, dict):
+                parsed_images.append(UploadedImage(
+                    id=str(img.get("id", "")),
+                    name=str(img.get("name", "")),
+                    type=str(img.get("type", "")),
+                    data=str(img.get("data", "")),
+                ))
 
     selection = ProvideChoiceSelection(
         selected_indices=ordered_ids,
@@ -67,6 +83,7 @@ def normalize_response(
         url=url,
         option_annotations=option_annotations or {},
         additional_annotation=additional_annotation,
+        uploaded_images=parsed_images,
     )
 
     return ProvideChoiceResponse(action_status=action_status, selection=selection)
@@ -78,9 +95,22 @@ def cancelled_response(
     url: Optional[str] = None,
     option_annotations: Optional[dict[str, str]] = None,
     additional_annotation: Optional[str] = None,
+    uploaded_images: Optional[list] = None,
     summary: str = "cancelled",
 ) -> "ProvideChoiceResponse":
-    from .models import ProvideChoiceResponse, ProvideChoiceSelection
+    from .models import ProvideChoiceResponse, ProvideChoiceSelection, UploadedImage
+
+    # Parse uploaded images
+    parsed_images: list[UploadedImage] = []
+    if uploaded_images:
+        for img in uploaded_images:
+            if isinstance(img, dict):
+                parsed_images.append(UploadedImage(
+                    id=str(img.get("id", "")),
+                    name=str(img.get("name", "")),
+                    type=str(img.get("type", "")),
+                    data=str(img.get("data", "")),
+                ))
 
     selection = ProvideChoiceSelection(
         selected_indices=[],
@@ -89,6 +119,7 @@ def cancelled_response(
         url=url,
         option_annotations=option_annotations or {},
         additional_annotation=additional_annotation,
+        uploaded_images=parsed_images,
     )
     return ProvideChoiceResponse(action_status="cancelled", selection=selection)
 

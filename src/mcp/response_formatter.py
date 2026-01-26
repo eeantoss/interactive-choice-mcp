@@ -58,7 +58,7 @@ def _format_standard_response(
 ) -> dict[str, object]:
     """Format standard response with selection data.
 
-    Adds optional fields like selected_indices, annotations, and validation_error.
+    Adds optional fields like selected_indices, annotations, uploaded_images, and validation_error.
     """
     # Handle validation_error separately (uses summary internally but exposed as validation_error)
     if selection.summary and selection.summary.startswith("validation_error"):
@@ -69,4 +69,15 @@ def _format_standard_response(
         out["option_annotations"] = selection.option_annotations
     if selection.additional_annotation:
         out["additional_annotation"] = selection.additional_annotation
+    # Include uploaded images if any
+    if selection.uploaded_images:
+        out["uploaded_images"] = [
+            {
+                "id": img.id,
+                "name": img.name,
+                "type": img.type,
+                "data": img.data,
+            }
+            for img in selection.uploaded_images
+        ]
     return out

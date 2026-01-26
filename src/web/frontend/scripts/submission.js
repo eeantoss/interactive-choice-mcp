@@ -128,6 +128,20 @@ function submitPayload(base, statusType = 'manual') {
     }
     const config = collectConfig();
     base.config = config;
+    
+    // Include uploaded images if any
+    if (typeof getUploadedImages === 'function') {
+        const images = getUploadedImages();
+        if (images && images.length > 0) {
+            base.uploaded_images = images.map(img => ({
+                id: img.id,
+                name: img.name,
+                type: img.type,
+                data: img.dataUrl
+            }));
+        }
+    }
+    
     postSelection(base, statusType);
 }
 

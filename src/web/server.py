@@ -374,6 +374,12 @@ class WebChoiceServer:
                     option_annotations = {str(k): str(v) for k, v in option_annotations_raw.items() if v}
                 additional_annotation_raw = payload.get("additional_annotation")
                 additional_annotation: str | None = str(additional_annotation_raw) if additional_annotation_raw else None
+                
+                # Parse uploaded images
+                uploaded_images_raw = payload.get("uploaded_images") or []
+                uploaded_images: list = []
+                if isinstance(uploaded_images_raw, list):
+                    uploaded_images = uploaded_images_raw
 
                 if action == "cancelled" or action == "cancel_with_annotation":
                     response = cancelled_response_fn(
@@ -381,6 +387,7 @@ class WebChoiceServer:
                         url=session.url,
                         option_annotations=option_annotations,
                         additional_annotation=additional_annotation,
+                        uploaded_images=uploaded_images,
                     )
                     # Update action_status if it's cancel_with_annotation
                     if action == "cancel_with_annotation":
@@ -413,6 +420,7 @@ class WebChoiceServer:
                         url=session.url,
                         option_annotations=option_annotations,
                         additional_annotation=additional_annotation,
+                        uploaded_images=uploaded_images,
                     )
                     result_set = session.set_result(response)
                     _logger.debug(f"Session {incoming_id[:8]} set_result returned: {result_set}")
@@ -553,6 +561,53 @@ class WebChoiceServer:
             except Exception as exc:
                 _logger.exception(f"Failed to create session via API: {exc}")
                 raise HTTPException(status_code=500, detail=f"Failed to create session: {str(exc)}") from exc
+
+        # Section: Image Upload API
+        @app.post("/api/upload")
+        async def upload_image(request):  # noqa: ANN201
+            """Upload an image and return its data URL.
+            
+            Accepts base64-encoded image data and returns it as a data URL
+            that can be embedded in the response.
+            """
+            from fastapi import Request
+            
+            try:
+                body = await request.json()
+                image_data = body.get("image")
+                mime_type = body.get("mime_type", "image/png")
+                
+                if not image_data:
+                    raise HTTPException(status_code=400, detail="No image data provided")
+                
+                # Validate it's a valid base64 string
+                import base64
+                try:
+                    # Remove data URL prefix if present
+                    if image_data.startswith("data:"):
+                        # Extract base64 part
+                        parts = image_data.split(",", 1)
+                        if len(parts) == 2:
+                            image_data = parts[1]
+                    
+                    # Validate base64
+                    base64.b64decode(image_data)
+                except Exception:
+                    raise HTTPException(status_code=400, detail="Invalid base64 image data")
+                
+                # Return as data URL
+                data_url = f"data:{mime_type};base64,{image_data}"
+                
+                _logger.info(f"Image uploaded: {len(image_data)} bytes")
+                return JSONResponse({
+                    "status": "ok",
+                    "data_url": data_url,
+                })
+            except HTTPException:
+                raise
+            except Exception as exc:
+                _logger.exception(f"Failed to upload image: {exc}")
+                raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(exc)}") from exc
 
         # Section: Terminal Hand-off Endpoints
         @app.get("/terminal/{session_id}")

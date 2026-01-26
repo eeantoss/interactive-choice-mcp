@@ -848,3 +848,61 @@ body.submitted .status {
     background-color: rgba(99, 102, 241, 0.25);
     border-color: rgba(99, 102, 241, 0.4);
 }
+
+
+/* Section: Image Preview */
+.image-preview-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 8px;
+    background: var(--bg);
+    border-radius: var(--radius);
+    border: 1px dashed var(--border);
+}
+
+.image-preview-item {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.image-preview-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.image-remove-btn {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--danger);
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+}
+
+.image-remove-btn:hover {
+    opacity: 1;
+}
+
+/* Drag over state for annotation textarea */
+.annotation-section textarea.drag-over {
+    border-color: var(--primary);
+    background: rgba(0, 191, 255, 0.05);
+}

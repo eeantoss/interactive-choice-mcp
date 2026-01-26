@@ -34,6 +34,7 @@ __all__ = [
     "ProvideChoiceOption",
     "ProvideChoiceRequest",
     "ProvideChoiceConfig",
+    "UploadedImage",
     "ProvideChoiceSelection",
     "ProvideChoiceResponse",
     "InteractionEntry",
@@ -156,6 +157,15 @@ class ProvideChoiceConfig:
 
 
 @dataclass
+class UploadedImage:
+    """Represents an uploaded image attachment."""
+    id: str
+    name: str
+    type: str  # MIME type
+    data: str  # Base64 data URL
+
+
+@dataclass
 class ProvideChoiceSelection:
     """The actual data selected or entered by the user."""
     # Note: selected_indices now holds option IDs (strings) instead of numeric indices.
@@ -166,6 +176,8 @@ class ProvideChoiceSelection:
     # Annotation fields (keys are option IDs)
     option_annotations: dict[str, str] = field(default_factory=dict)
     additional_annotation: Optional[str] = None
+    # Uploaded images
+    uploaded_images: List[UploadedImage] = field(default_factory=list)
 
 
 @dataclass

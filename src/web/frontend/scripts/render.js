@@ -390,6 +390,9 @@ function initializeRender() {
     syncAnnotationVisibility();
     adjustPromptMinHeight();
 
+    // Initialize image paste functionality
+    initializeImagePaste();
+
     // Auto-focus options for keyboard navigation
     setTimeout(() => {
         const opts = document.getElementById('options');
@@ -547,4 +550,170 @@ function refreshFullUI() {
     syncAnnotationVisibility();
     adjustPromptMinHeight();
     debugLog('Render', 'refreshFullUI complete');
+}
+
+// Section: Image Paste Support
+/**
+ * Initialize image paste functionality for annotation inputs
+ */
+function initializeImagePaste() {
+    const additionalAnnotation = document.getElementById('additionalAnnotation');
+    if (!additionalAnnotation) return;
+
+    // Add paste event listener
+    additionalAnnotation.addEventListener('paste', handleImagePaste);
+    
+    // Add drag and drop support
+    additionalAnnotation.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        additionalAnnotation.classList.add('drag-over');
+    });
+    
+    additionalAnnotation.addEventListener('dragleave', () => {
+        additionalAnnotation.classList.remove('drag-over');
+    });
+    
+    additionalAnnotation.addEventListener('drop', handleImageDrop);
+}
+
+/**
+ * Handle paste event for images
+ */
+async function handleImagePaste(e) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+        if (item.type.startsWith('image/')) {
+            e.preventDefault();
+            const file = item.getAsFile();
+            if (file) {
+                await uploadAndInsertImage(file);
+            }
+            return;
+        }
+    }
+}
+
+/**
+ * Handle drop event for images
+ */
+async function handleImageDrop(e) {
+    e.preventDefault();
+    e.target.classList.remove('drag-over');
+    
+    const files = e.dataTransfer?.files;
+    if (!files) return;
+
+    for (const file of files) {
+        if (file.type.startsWith('image/')) {
+            await uploadAndInsertImage(file);
+            return;
+        }
+    }
+}
+
+/**
+ * Upload image and insert preview
+ */
+async function uploadAndInsertImage(file) {
+    const state = window.mcpState;
+    
+    // Initialize images array if not exists
+    if (!state.uploadedImages) {
+        state.uploadedImages = [];
+    }
+    
+    // Read file as base64
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        const dataUrl = e.target.result;
+        
+        // Store the image
+        const imageId = 'img_' + Date.now();
+        state.uploadedImages.push({
+            id: imageId,
+            dataUrl: dataUrl,
+            name: file.name,
+            type: file.type,
+        });
+        
+        // Update preview
+        updateImagePreview();
+        
+        // Update cancel button
+        updateCancelBtn();
+        
+        debugLog('Render', 'Image uploaded:', imageId);
+    };
+    reader.readAsDataURL(file);
+}
+
+/**
+ * Update image preview display
+ */
+function updateImagePreview() {
+    const state = window.mcpState;
+    const images = state.uploadedImages || [];
+    
+    // Find or create preview container
+    let previewContainer = document.getElementById('imagePreviewContainer');
+    if (!previewContainer) {
+        const annotationSection = document.getElementById('annotationSection');
+        if (!annotationSection) return;
+        
+        previewContainer = document.createElement('div');
+        previewContainer.id = 'imagePreviewContainer';
+        previewContainer.className = 'image-preview-container';
+        annotationSection.insertBefore(previewContainer, annotationSection.firstChild);
+    }
+    
+    // Clear and rebuild
+    previewContainer.innerHTML = '';
+    
+    if (images.length === 0) {
+        previewContainer.style.display = 'none';
+        return;
+    }
+    
+    previewContainer.style.display = 'flex';
+    
+    images.forEach((img, index) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'image-preview-item';
+        
+        const imgEl = document.createElement('img');
+        imgEl.src = img.dataUrl;
+        imgEl.alt = img.name || 'Uploaded image';
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'image-remove-btn';
+        removeBtn.innerHTML = '×';
+        removeBtn.onclick = () => {
+            state.uploadedImages.splice(index, 1);
+            updateImagePreview();
+            updateCancelBtn();
+        };
+        
+        wrapper.appendChild(imgEl);
+        wrapper.appendChild(removeBtn);
+        previewContainer.appendChild(wrapper);
+    });
+}
+
+/**
+ * Get uploaded images for submission
+ */
+function getUploadedImages() {
+    const state = window.mcpState;
+    return state.uploadedImages || [];
+}
+
+/**
+ * Clear uploaded images
+ */
+function clearUploadedImages() {
+    const state = window.mcpState;
+    state.uploadedImages = [];
+    updateImagePreview();
 }
