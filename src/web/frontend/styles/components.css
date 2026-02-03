@@ -292,6 +292,8 @@ input[type="checkbox"] {
 .option-content {
     flex: 1;
     min-width: 0;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .option-label {

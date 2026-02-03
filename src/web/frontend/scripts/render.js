@@ -137,10 +137,24 @@ function adjustPromptMinHeight() {
 // Section: Option Selection
 function toggleOptionSelection(optionId, block) {
     const state = window.mcpState;
+    const isMultiMode = window.mcpData.promptType === 'multi';
+    
     if (state.selectedIndices.has(optionId)) {
-        state.selectedIndices.delete(optionId);
-        block.classList.remove('selected');
+        // In single mode, clicking selected option should NOT deselect
+        // In multi mode, allow toggle behavior
+        if (isMultiMode) {
+            state.selectedIndices.delete(optionId);
+            block.classList.remove('selected');
+        }
+        // Single mode: do nothing, keep selected
     } else {
+        // In single mode, clear previous selection first
+        if (!isMultiMode) {
+            state.selectedIndices.clear();
+            document.querySelectorAll('.option.selected').forEach(el => {
+                el.classList.remove('selected');
+            });
+        }
         state.selectedIndices.add(optionId);
         block.classList.add('selected');
     }
