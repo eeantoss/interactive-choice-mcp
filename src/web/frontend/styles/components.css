@@ -384,7 +384,7 @@ input[type="checkbox"] {
     color: var(--text);
     transition: border-color 0.2s, box-shadow 0.2s;
     resize: vertical;
-    min-height: 60px;
+    min-height: 160px;
     /* No max-height - allow user to expand freely */
 }
 

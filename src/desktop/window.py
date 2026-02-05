@@ -51,6 +51,7 @@ def _run_webview_window(url: str, title: str) -> None:
         resizable=True,
         on_top=True,
         confirm_close=False,
+        text_select=True,
     )
     webview.start()
 
@@ -99,6 +100,7 @@ window = webview.create_window(
     resizable=True,
     on_top=True,
     confirm_close=False,
+    text_select=True,
 )
 webview.start()
 '''
